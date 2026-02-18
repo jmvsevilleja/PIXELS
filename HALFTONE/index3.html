@@ -1,0 +1,1157 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Halftone Comparison – 3 Algorithms</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      :root {
+        --bg: #101218;
+        --panel: #181b24;
+        --panel-alt: #1f2330;
+        --accent: #4fa3ff;
+        --accent-soft: rgba(79, 163, 255, 0.18);
+        --border-subtle: #2a3142;
+        --text: #f5f7ff;
+        --text-muted: #a3adc2;
+        --danger: #ff6b7a;
+        --radius-lg: 14px;
+        --radius-md: 10px;
+        --shadow-soft: 0 18px 45px rgba(0, 0, 0, 0.45);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: 24px;
+        font-family:
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        background: radial-gradient(
+          circle at top,
+          #1e2433,
+          #05060a 52%,
+          #020308
+        );
+        color: var(--text);
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .app-shell {
+        max-width: 1280px;
+        margin: 0 auto;
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 12px 20px;
+      }
+
+      header .title-block {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      header h1 {
+        margin: 0;
+        font-size: 1.4rem;
+        letter-spacing: 0.04em;
+      }
+
+      header p {
+        margin: 0;
+        font-size: 0.86rem;
+        color: var(--text-muted);
+      }
+
+      .file-input-wrap {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: linear-gradient(135deg, #202534, #131724);
+        border: 1px solid var(--border-subtle);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+        color: var(--text-muted);
+        font-size: 0.85rem;
+        white-space: nowrap;
+      }
+
+      .file-input-wrap input[type="file"] {
+        max-width: 220px;
+        color: var(--text);
+      }
+
+      .file-input-wrap small {
+        color: var(--text-muted);
+      }
+
+      .controls-panel {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 12px 18px;
+        background: rgba(7, 10, 20, 0.9);
+        border-radius: var(--radius-lg);
+        padding: 14px 16px 10px;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        box-shadow: var(--shadow-soft);
+        backdrop-filter: blur(16px);
+      }
+
+      .control-group {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 0;
+      }
+
+      .control-label {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        font-size: 0.82rem;
+        color: var(--text-muted);
+      }
+
+      .control-label span.value {
+        color: var(--accent);
+        font-variant-numeric: tabular-nums;
+        font-size: 0.8rem;
+      }
+
+      input[type="range"] {
+        width: 100%;
+        accent-color: var(--accent);
+      }
+
+      .toggle-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.86rem;
+        color: var(--text-muted);
+      }
+
+      .toggle-row input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        accent-color: var(--accent);
+      }
+
+      .main-layout {
+        margin-top: 4px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .canvas-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+      }
+
+      .canvas-panel {
+        flex: 1 1 260px;
+        min-width: 0;
+        background: var(--panel);
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--border-subtle);
+        box-shadow: var(--shadow-soft);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      .panel-header {
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        background: linear-gradient(
+          135deg,
+          rgba(37, 45, 72, 0.9),
+          rgba(24, 27, 36, 0.95)
+        );
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .panel-title {
+        font-size: 0.86rem;
+        font-weight: 600;
+      }
+
+      .panel-subtitle {
+        font-size: 0.73rem;
+        color: var(--text-muted);
+      }
+
+      .canvas-wrap {
+        position: relative;
+        background: radial-gradient(circle at top, #262c3d, #151822);
+        padding: 10px;
+      }
+
+      canvas {
+        display: block;
+        width: 100%;
+        height: auto;
+        border-radius: var(--radius-md);
+        background: #fff;
+      }
+
+      .panel-footer {
+        padding: 8px 10px 10px;
+        border-top: 1px solid rgba(255, 255, 255, 0.04);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        background: var(--panel-alt);
+      }
+
+      .export-btn {
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: radial-gradient(
+          circle at top left,
+          var(--accent-soft),
+          rgba(11, 15, 24, 0.9)
+        );
+        color: var(--text);
+        font-size: 0.8rem;
+        padding: 6px 10px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .export-btn:hover {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 1px rgba(79, 163, 255, 0.3);
+      }
+
+      .hint {
+        font-size: 0.72rem;
+        color: var(--text-muted);
+      }
+
+      .status-bar {
+        font-size: 0.76rem;
+        color: var(--text-muted);
+        display: flex;
+        justify-content: space-between;
+        margin-top: 2px;
+        padding: 0 2px 2px;
+      }
+
+      .status-bar .warning {
+        color: var(--danger);
+      }
+
+      @media (max-width: 700px) {
+        body {
+          padding: 16px;
+        }
+
+        header h1 {
+          font-size: 1.2rem;
+        }
+
+        .controls-panel {
+          padding: 12px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header>
+        <div class="title-block">
+          <h1>Halftone Comparison Lab</h1>
+          <p>
+            Compare mechanical, stochastic, and artistic halftone styles from a
+            single source image.
+          </p>
+        </div>
+        <div class="file-input-wrap">
+          <label for="imageLoader">Upload image</label>
+          <input id="imageLoader" type="file" accept="image/*" />
+          <small id="imageInfo">No image loaded</small>
+        </div>
+      </header>
+
+      <section class="controls-panel" aria-label="Halftone controls">
+        <div class="control-group">
+          <label class="control-label" for="gridSpacing">
+            <span>Grid spacing</span>
+            <span class="value" id="gridSpacingValue"></span>
+          </label>
+          <input
+            id="gridSpacing"
+            type="range"
+            min="1"
+            max="40"
+            step="1"
+            value="12"
+          />
+        </div>
+
+        <div class="control-group">
+          <label class="control-label" for="minDotSize">
+            <span>Min dot size</span>
+            <span class="value" id="minDotSizeValue"></span>
+          </label>
+          <input
+            id="minDotSize"
+            type="range"
+            min="0"
+            max="4"
+            step="0.1"
+            value="0.6"
+          />
+        </div>
+
+        <div class="control-group">
+          <label class="control-label" for="maxDotSize">
+            <span>Max dot size</span>
+            <span class="value" id="maxDotSizeValue"></span>
+          </label>
+          <input
+            id="maxDotSize"
+            type="range"
+            min="1"
+            max="16"
+            step="0.1"
+            value="7"
+          />
+        </div>
+
+        <div class="control-group">
+          <label class="control-label" for="contrastMultiplier">
+            <span>Contrast multiplier</span>
+            <span class="value" id="contrastMultiplierValue"></span>
+          </label>
+          <input
+            id="contrastMultiplier"
+            type="range"
+            min="0.5"
+            max="2.5"
+            step="0.05"
+            value="1.1"
+          />
+        </div>
+
+        <div class="control-group">
+          <label class="control-label" for="dotShape">
+            <span>Dot shape</span>
+          </label>
+          <select id="dotShape">
+            <option value="circle" selected>Circle</option>
+            <option value="square">Square</option>
+          </select>
+          <div class="hint">Switch between circular or square “dots”.</div>
+        </div>
+
+        <div class="control-group">
+          <div class="toggle-row">
+            <input id="invertToggle" type="checkbox" />
+            <label for="invertToggle">Invert brightness</label>
+          </div>
+          <div class="hint">
+            Useful when preparing for dark substrates or inverted stencils.
+          </div>
+        </div>
+      </section>
+
+      <section class="main-layout">
+        <div class="canvas-row">
+          <article class="canvas-panel">
+            <div class="panel-header">
+              <div class="panel-title">Type 1 – Fixed Grid + Variable Size</div>
+              <div class="panel-subtitle">
+                Mechanical halftone suitable for rhinestone / bead machines.
+              </div>
+            </div>
+            <div class="canvas-wrap">
+              <canvas id="canvas1" width="600" height="400"></canvas>
+            </div>
+            <div class="panel-footer">
+              <div>
+                <label class="toggle-row">
+                  <input
+                    type="checkbox"
+                    class="type-toggle"
+                    data-type="1"
+                    checked
+                  />
+                  <span>Apply effect</span>
+                </label>
+              </div>
+              <div>
+                <button class="export-btn" data-type="1">
+                  <span>Export SVG</span>
+                </button>
+              </div>
+            </div>
+          </article>
+
+          <article class="canvas-panel">
+            <div class="panel-header">
+              <div class="panel-title">
+                Type 2 – Fixed Size + Variable Density
+              </div>
+              <div class="panel-subtitle">
+                Stochastic screening: constant dot size, tone via density.
+              </div>
+            </div>
+            <div class="canvas-wrap">
+              <canvas id="canvas2" width="600" height="400"></canvas>
+            </div>
+            <div class="panel-footer">
+              <div>
+                <label class="toggle-row">
+                  <input
+                    type="checkbox"
+                    class="type-toggle"
+                    data-type="2"
+                    checked
+                  />
+                  <span>Apply effect</span>
+                </label>
+              </div>
+              <div>
+                <button class="export-btn" data-type="2">
+                  <span>Export SVG</span>
+                </button>
+              </div>
+            </div>
+          </article>
+
+          <article class="canvas-panel">
+            <div class="panel-header">
+              <div class="panel-title">
+                Type 3 – Variable Size + Variable Position
+              </div>
+              <div class="panel-subtitle">
+                Artistic Poisson-disc style halftone with organic structure.
+              </div>
+            </div>
+            <div class="canvas-wrap">
+              <canvas id="canvas3" width="600" height="400"></canvas>
+            </div>
+            <div class="panel-footer">
+              <div>
+                <label class="toggle-row">
+                  <input
+                    type="checkbox"
+                    class="type-toggle"
+                    data-type="3"
+                    checked
+                  />
+                  <span>Apply effect</span>
+                </label>
+              </div>
+              <div>
+                <button class="export-btn" data-type="3">
+                  <span>Export SVG</span>
+                </button>
+              </div>
+            </div>
+          </article>
+
+          <article class="canvas-panel">
+            <div class="panel-header">
+              <div class="panel-title">Type 4 – Fixed Grid + Fixed Size</div>
+              <div class="panel-subtitle">
+                Uniform grid with constant dot size, gated by brightness.
+              </div>
+            </div>
+            <div class="canvas-wrap">
+              <canvas id="canvas4" width="600" height="400"></canvas>
+            </div>
+            <div class="panel-footer">
+              <div>
+                <label class="toggle-row">
+                  <input
+                    type="checkbox"
+                    class="type-toggle"
+                    data-type="4"
+                    checked
+                  />
+                  <span>Apply effect</span>
+                </label>
+              </div>
+              <div>
+                <button class="export-btn" data-type="4">
+                  <span>Export SVG</span>
+                </button>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <div class="status-bar">
+          <span id="statusText">Upload an image to begin.</span>
+          <span id="perfHint" class="warning"></span>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      // ---------- Global state ----------
+
+      const state = {
+        width: 0,
+        height: 0,
+        grayBuffer: null, // Float32Array of brightness 0–1 (non-inverted, non-contrast-adjusted)
+        invert: false,
+        gridSpacing: 12,
+        minDotSize: 0.6,
+        maxDotSize: 7,
+        contrastMultiplier: 1.1,
+        dotShape: "circle",
+        enabledTypes: {
+          1: true,
+          2: true,
+          3: true,
+          4: true,
+        },
+        needsRender: false,
+        dotsCache: {
+          1: null,
+          2: null,
+          3: null,
+          4: null,
+        },
+      };
+
+      const MAX_DIMENSION = 1000; // downscale large uploads
+
+      const canvases = {};
+
+      // ---------- Utility: seeded PRNG (mulberry32) ----------
+
+      function mulberry32(a) {
+        let t = a >>> 0;
+        return function () {
+          t += 0x6d2b79f5;
+          let r = Math.imul(t ^ (t >>> 15), t | 1);
+          r ^= r + Math.imul(r ^ (r >>> 7), r | 61);
+          return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+
+      // ---------- Brightness helpers ----------
+
+      function clamp01(x) {
+        return x < 0 ? 0 : x > 1 ? 1 : x;
+      }
+
+      function applyContrast(b, contrast) {
+        // Center-based contrast: expand or compress around 0.5
+        const c = contrast;
+        if (Math.abs(c - 1) < 1e-3) return clamp01(b);
+        const v = 0.5 + (b - 0.5) * c;
+        return clamp01(v);
+      }
+
+      function getBrightnessFactory() {
+        const { grayBuffer, width, height, invert, contrastMultiplier } = state;
+        return function getBrightness(x, y) {
+          if (!grayBuffer) return 0;
+          const ix = Math.max(0, Math.min(width - 1, Math.round(x)));
+          const iy = Math.max(0, Math.min(height - 1, Math.round(y)));
+          const idx = iy * width + ix;
+          let b = grayBuffer[idx]; // 0–1
+          if (invert) b = 1 - b;
+          b = applyContrast(b, contrastMultiplier);
+          return b;
+        };
+      }
+
+      // ---------- Image loading & grayscale preprocessing ----------
+
+      function handleFileInput(event) {
+        const file = event.target.files && event.target.files[0];
+        if (!file) return;
+
+        const infoEl = document.getElementById("imageInfo");
+        infoEl.textContent = "Loading…";
+
+        const reader = new FileReader();
+        reader.onload = function (e) {
+          const img = new Image();
+          img.onload = function () {
+            prepareGrayscale(img);
+          };
+          img.onerror = function () {
+            infoEl.textContent = "Failed to load image.";
+          };
+          img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+      }
+
+      function prepareGrayscale(img) {
+        // Downscale large images for performance, preserving aspect ratio.
+        const scale = Math.min(
+          MAX_DIMENSION / img.width,
+          MAX_DIMENSION / img.height,
+          1,
+        );
+        const width = Math.round(img.width * scale);
+        const height = Math.round(img.height * scale);
+
+        const offscreen = document.createElement("canvas");
+        offscreen.width = width;
+        offscreen.height = height;
+        const ctx = offscreen.getContext("2d", { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0, width, height);
+
+        const imageData = ctx.getImageData(0, 0, width, height);
+        const data = imageData.data;
+        const len = width * height;
+        const gray = new Float32Array(len);
+
+        // Precompute grayscale buffer once using luminance formula:
+        // brightness = 0.299R + 0.587G + 0.114B, normalized to 0–1
+        for (let i = 0, j = 0; i < len; i++, j += 4) {
+          const r = data[j];
+          const g = data[j + 1];
+          const b = data[j + 2];
+          const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+          gray[i] = lum / 255;
+        }
+
+        state.width = width;
+        state.height = height;
+        state.grayBuffer = gray;
+        state.dotsCache[1] = null;
+        state.dotsCache[2] = null;
+        state.dotsCache[3] = null;
+        state.dotsCache[4] = null;
+
+        const infoEl = document.getElementById("imageInfo");
+        infoEl.textContent = `${width}×${height}`;
+
+        document.getElementById("statusText").textContent =
+          "Image loaded. Check which types to apply; changes update automatically.";
+      }
+
+      // ---------- Rendering coordination ----------
+
+      function markNeedsRender() {
+        // Clear caches to respect new parameters and trigger a re-render
+        // for all currently enabled types.
+        state.needsRender = true;
+        state.dotsCache[1] = null;
+        state.dotsCache[2] = null;
+        state.dotsCache[3] = null;
+        state.dotsCache[4] = null;
+      }
+
+      function resizeCanvases() {
+        const { width, height } = state;
+        if (!width || !height) return;
+        for (const key of [1, 2, 3, 4]) {
+          const canvas = canvases[key];
+          if (!canvas) continue;
+          canvas.width = width;
+          canvas.height = height;
+        }
+      }
+
+      function drawDotsToCanvas(ctx, dots) {
+        const { width, height, dotShape } = state;
+        // Dark background with white dots: this reads correctly as “light = ink”
+        // when viewed on screen or exported as SVG.
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.fillStyle = "#05060a";
+        ctx.fillRect(0, 0, width, height);
+        ctx.restore();
+
+        if (!dots || dots.length === 0) return;
+
+        ctx.fillStyle = "#ffffff";
+        ctx.beginPath();
+        if (dotShape === "square") {
+          // Draw axis-aligned squares centred on (x, y)
+          for (let i = 0; i < dots.length; i++) {
+            const d = dots[i];
+            if (d.r <= 0) continue;
+            const size = d.r * 2;
+            ctx.rect(d.x - d.r, d.y - d.r, size, size);
+          }
+        } else {
+          // Default: circular dots
+          for (let i = 0; i < dots.length; i++) {
+            const d = dots[i];
+            if (d.r <= 0) continue;
+            ctx.moveTo(d.x + d.r, d.y);
+            ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+          }
+        }
+        ctx.fill();
+      }
+
+      function buildCommonParams() {
+        return {
+          width: state.width,
+          height: state.height,
+          grayBuffer: state.grayBuffer,
+          getBrightness: getBrightnessFactory(),
+          gridSpacing: state.gridSpacing,
+          minDot: state.minDotSize,
+          maxDot: state.maxDotSize,
+          contrast: state.contrastMultiplier,
+          invert: state.invert,
+        };
+      }
+
+      // ---------- Algorithm: Type 1 – Fixed Grid + Variable Size ----------
+      // Mechanical halftone: every grid cell contains at most one dot, positioned
+      // at the cell center. Dot radius encodes brightness (white → large, black → none).
+
+      function computeDotsType1(params) {
+        const { width, height, gridSpacing, minDot, maxDot, getBrightness } =
+          params;
+        const dots = [];
+        const cell = Math.max(2, gridSpacing);
+
+        for (let y = 0; y < height; y += cell) {
+          const cy = y + cell / 2;
+          for (let x = 0; x < width; x += cell) {
+            const cx = x + cell / 2;
+            const b = getBrightness(cx, cy); // 0–1 (0 = black, 1 = white)
+            if (b <= 0.001) continue; // do not place a dot on (near) black
+            const t = b; // whiter → larger
+            const r = minDot + t * (maxDot - minDot);
+            if (r <= 0.01) continue;
+            dots.push({ x: cx, y: cy, r });
+          }
+        }
+        return dots;
+      }
+
+      function renderType1(params) {
+        const dots =
+          state.dotsCache[1] || (state.dotsCache[1] = computeDotsType1(params));
+        const ctx = canvases[1].getContext("2d");
+        drawDotsToCanvas(ctx, dots);
+      }
+
+      // ---------- Algorithm: Type 2 – Fixed Size + Variable Density ----------
+      // Stochastic screening: sample image on a grid, but use fixed-radius dots.
+      // Bright (white) cells have higher probability of placing a dot, dark cells fewer.
+      // Dot positions jittered within each cell to avoid a rigid grid appearance.
+      // Randomness is internal and deterministic (no user-controlled seed).
+
+      function computeDotsType2(params) {
+        const {
+          width,
+          height,
+          gridSpacing,
+          minDot,
+          maxDot,
+          getBrightness,
+          contrast,
+        } = params;
+        const dots = [];
+        const cell = Math.max(2, gridSpacing);
+
+        // Fixed radius between min and max; can be tuned for overall density.
+        const r = (minDot + maxDot) / 2;
+        if (r <= 0.01) return dots;
+
+        const jitterFactor = 0.85; // fraction of cell size for jitter amplitude
+
+        // Deterministic PRNG so output is stable for a given image/params.
+        const rng = mulberry32(1337);
+
+        for (let y = 0; y < height; y += cell) {
+          const cy = y + cell / 2;
+          for (let x = 0; x < width; x += cell) {
+            const cx = x + cell / 2;
+            const b = getBrightness(cx, cy); // 0–1 (0 = black, 1 = white)
+            let p = b; // white → large probability
+            // Shape probability using contrast multiplier for more separation
+            p = Math.pow(clamp01(p), contrast);
+            if (p <= 0) continue;
+            if (rng() < p) {
+              const jx = (rng() - 0.5) * jitterFactor * cell;
+              const jy = (rng() - 0.5) * jitterFactor * cell;
+              const px = clamp01((cx + jx) / width) * width;
+              const py = clamp01((cy + jy) / height) * height;
+              dots.push({ x: px, y: py, r });
+            }
+          }
+        }
+
+        return dots;
+      }
+
+      function renderType2(params) {
+        const dots =
+          state.dotsCache[2] || (state.dotsCache[2] = computeDotsType2(params));
+        const ctx = canvases[2].getContext("2d");
+        drawDotsToCanvas(ctx, dots);
+      }
+
+      // ---------- Algorithm: Type 3 – Variable Size + Variable Position ----------
+      // Artistic halftone using Poisson-disc-style dart throwing.
+      // - No global grid: candidate positions are random across the image.
+      // - Brightness controls both dot radius and local minimum distance.
+      //   Whiter regions → larger dots + smaller spacing → more dots.
+      //   Darker regions → smaller dots + larger spacing → fewer dots.
+      // Randomness is internal and deterministic (no user-controlled seed).
+
+      function computeDotsType3(params) {
+        const { width, height, minDot, maxDot, getBrightness } = params;
+        const dots = [];
+        if (!width || !height) return dots;
+
+        // Limit number of dots and attempts for performance.
+        const estimatedBase =
+          (width * height) / (params.gridSpacing * params.gridSpacing);
+        const maxDots = Math.min(15000, Math.round(estimatedBase * 2.5));
+        const maxAttempts = Math.min(60000, maxDots * 8);
+
+        // Spatial hash grid to accelerate minimum-distance queries.
+        const cellSize = Math.max(2, maxDot * 2);
+        const cols = Math.ceil(width / cellSize);
+        const rows = Math.ceil(height / cellSize);
+        const grid = new Array(cols * rows);
+        for (let i = 0; i < grid.length; i++) grid[i] = [];
+
+        function gridIndex(ix, iy) {
+          return iy * cols + ix;
+        }
+
+        // Deterministic PRNG so layout is stable for a given image/params.
+        const rng = mulberry32(4242);
+
+        let attempts = 0;
+        while (attempts < maxAttempts && dots.length < maxDots) {
+          attempts++;
+          const x = rng() * width;
+          const y = rng() * height;
+          const b = getBrightness(x, y); // 0–1 (0 = black, 1 = white)
+          if (b <= 0.001) continue; // do not place dots on (near) black
+          const t = b; // whiter → larger radius
+          const r = minDot + t * (maxDot - minDot);
+          if (r <= 0.12) continue;
+
+          // Map brightness to minimum spacing factor:
+          // - Bright areas: allow closer centers (more overlap), factor ~ 1.1
+          // - Dark areas: push centers apart, factor ~ 2.6
+          const minFactorBright = 1.1;
+          const minFactorDark = 2.6;
+          const factor = minFactorDark * (1 - b) + minFactorBright * b;
+          const dMin = r * factor;
+          const dMinSq = dMin * dMin;
+
+          const ix = Math.floor(x / cellSize);
+          const iy = Math.floor(y / cellSize);
+          let ok = true;
+
+          for (let gy = iy - 1; gy <= iy + 1 && ok; gy++) {
+            if (gy < 0 || gy >= rows) continue;
+            for (let gx = ix - 1; gx <= ix + 1 && ok; gx++) {
+              if (gx < 0 || gx >= cols) continue;
+              const bucket = grid[gridIndex(gx, gy)];
+              for (let i = 0; i < bucket.length; i++) {
+                const p = dots[bucket[i]];
+                const dx = p.x - x;
+                const dy = p.y - y;
+                if (dx * dx + dy * dy < dMinSq) {
+                  ok = false;
+                  break;
+                }
+              }
+            }
+          }
+
+          if (!ok) continue;
+
+          const idx = dots.length;
+          dots.push({ x, y, r });
+          grid[gridIndex(ix, iy)].push(idx);
+        }
+
+        const perfHint = document.getElementById("perfHint");
+        if (attempts >= maxAttempts) {
+          perfHint.textContent =
+            "Type 3 capped at " +
+            dots.length +
+            " dots for performance (increase grid spacing / reduce max dot size for speed).";
+        } else {
+          perfHint.textContent = "";
+        }
+
+        return dots;
+      }
+
+      function renderType3(params) {
+        const dots =
+          state.dotsCache[3] || (state.dotsCache[3] = computeDotsType3(params));
+        const ctx = canvases[3].getContext("2d");
+        drawDotsToCanvas(ctx, dots);
+      }
+
+      // ---------- Algorithm: Type 4 – Fixed Grid + Fixed Size ----------
+      // Mechanical pattern with fixed grid and fixed dot size:
+      // - Grid spacing same as other grid-based types.
+      // - Dot radius is constant across the image.
+      // - Bright pixels enable dots; near-black pixels have no dots.
+
+      function computeDotsType4(params) {
+        const { width, height, gridSpacing, minDot, maxDot, getBrightness } =
+          params;
+        const dots = [];
+        const cell = Math.max(2, gridSpacing);
+
+        // Fixed radius between min and max, but we clamp to a moderate range
+        // so that this mode remains clearly distinct.
+        const r = (minDot + maxDot) / 2;
+        if (r <= 0.01) return dots;
+
+        for (let y = 0; y < height; y += cell) {
+          const cy = y + cell / 2;
+          for (let x = 0; x < width; x += cell) {
+            const cx = x + cell / 2;
+            const b = getBrightness(cx, cy); // 0–1 (0 = black, 1 = white)
+            if (b <= 0.001) continue; // no dot on (near) black
+            dots.push({ x: cx, y: cy, r });
+          }
+        }
+
+        return dots;
+      }
+
+      function renderType4(params) {
+        const dots =
+          state.dotsCache[4] || (state.dotsCache[4] = computeDotsType4(params));
+        const ctx = canvases[4].getContext("2d");
+        drawDotsToCanvas(ctx, dots);
+      }
+
+      // ---------- Master render loop using requestAnimationFrame ----------
+
+      function renderAllTypes() {
+        if (!state.grayBuffer || !state.width || !state.height) return;
+        resizeCanvases();
+
+        const params = buildCommonParams();
+
+        // For disabled types, clear canvas to background only.
+        for (const t of [1, 2, 3, 4]) {
+          const canvas = canvases[t];
+          if (!canvas) continue;
+          if (!state.enabledTypes[t]) {
+            const ctx = canvas.getContext("2d");
+            drawDotsToCanvas(ctx, []); // background only
+          }
+        }
+
+        if (state.enabledTypes[1]) renderType1(params);
+        if (state.enabledTypes[2]) renderType2(params);
+        if (state.enabledTypes[3]) renderType3(params);
+        if (state.enabledTypes[4]) renderType4(params);
+      }
+
+      function animationLoop() {
+        if (state.needsRender) {
+          state.needsRender = false;
+          renderAllTypes();
+        }
+        requestAnimationFrame(animationLoop);
+      }
+
+      // ---------- SVG export ----------
+
+      function exportSvgForType(type) {
+        if (!state.grayBuffer || !state.width || !state.height) return;
+        const t = parseInt(type, 10);
+
+        const params = buildCommonParams();
+
+        let dots = state.dotsCache[t];
+        if (!dots) {
+          if (t === 1) dots = computeDotsType1(params);
+          else if (t === 2) dots = computeDotsType2(params);
+          else if (t === 3) dots = computeDotsType3(params);
+          else if (t === 4) dots = computeDotsType4(params);
+        }
+        if (!dots || dots.length === 0) return;
+
+        const W = state.width;
+        const H = state.height;
+        let svg = "";
+        svg += `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`;
+        svg += `<rect width="100%" height="100%" fill="#05060a"/>`;
+        const shape = state.dotShape || "circle";
+        for (let i = 0; i < dots.length; i++) {
+          const d = dots[i];
+          const r = d.r;
+          if (r <= 0) continue;
+          if (shape === "square") {
+            const size = (r * 2).toFixed(3);
+            const x = (d.x - r).toFixed(3);
+            const y = (d.y - r).toFixed(3);
+            svg += `<rect x="${x}" y="${y}" width="${size}" height="${size}" fill="white" />`;
+          } else {
+            svg += `<circle cx="${d.x.toFixed(3)}" cy="${d.y.toFixed(3)}" r="${r.toFixed(
+              3,
+            )}" fill="white" />`;
+          }
+        }
+        svg += `</svg>`;
+
+        const blob = new Blob([svg], { type: "image/svg+xml" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `halftone-type${t}.svg`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+
+      // ---------- Controls wiring ----------
+
+      function setupControls() {
+        const gridSpacing = document.getElementById("gridSpacing");
+        const minDotSize = document.getElementById("minDotSize");
+        const maxDotSize = document.getElementById("maxDotSize");
+        const contrastMultiplier =
+          document.getElementById("contrastMultiplier");
+        const dotShapeSelect = document.getElementById("dotShape");
+        const invertToggle = document.getElementById("invertToggle");
+
+        const gridSpacingValue = document.getElementById("gridSpacingValue");
+        const minDotSizeValue = document.getElementById("minDotSizeValue");
+        const maxDotSizeValue = document.getElementById("maxDotSizeValue");
+        const contrastMultiplierValue = document.getElementById(
+          "contrastMultiplierValue",
+        );
+
+        function syncLabels() {
+          gridSpacingValue.textContent = `${state.gridSpacing.toFixed(0)} px`;
+          minDotSizeValue.textContent = `${state.minDotSize.toFixed(1)} px`;
+          maxDotSizeValue.textContent = `${state.maxDotSize.toFixed(1)} px`;
+          contrastMultiplierValue.textContent = `${state.contrastMultiplier.toFixed(
+            2,
+          )}×`;
+        }
+
+        // Initialize from default state
+        state.gridSpacing = Number(gridSpacing.value);
+        state.minDotSize = Number(minDotSize.value);
+        state.maxDotSize = Number(maxDotSize.value);
+        state.contrastMultiplier = Number(contrastMultiplier.value);
+        state.dotShape = dotShapeSelect.value || "circle";
+        state.invert = Boolean(invertToggle.checked);
+        state.enabledTypes = { 1: true, 2: true, 3: true, 4: true };
+        syncLabels();
+
+        gridSpacing.addEventListener("input", () => {
+          state.gridSpacing = Number(gridSpacing.value);
+          syncLabels();
+          markNeedsRender();
+        });
+
+        minDotSize.addEventListener("input", () => {
+          state.minDotSize = Number(minDotSize.value);
+          if (state.minDotSize > state.maxDotSize) {
+            state.maxDotSize = state.minDotSize;
+            maxDotSize.value = String(state.maxDotSize);
+          }
+          syncLabels();
+          markNeedsRender();
+        });
+
+        maxDotSize.addEventListener("input", () => {
+          state.maxDotSize = Number(maxDotSize.value);
+          if (state.maxDotSize < state.minDotSize) {
+            state.minDotSize = state.maxDotSize;
+            minDotSize.value = String(state.minDotSize);
+          }
+          syncLabels();
+          markNeedsRender();
+        });
+
+        contrastMultiplier.addEventListener("input", () => {
+          state.contrastMultiplier = Number(contrastMultiplier.value);
+          syncLabels();
+          markNeedsRender();
+        });
+
+        invertToggle.addEventListener("change", () => {
+          state.invert = invertToggle.checked;
+          markNeedsRender();
+        });
+
+        dotShapeSelect.addEventListener("change", () => {
+          state.dotShape = dotShapeSelect.value || "circle";
+          markNeedsRender();
+        });
+
+        document
+          .getElementById("imageLoader")
+          .addEventListener("change", handleFileInput);
+
+        const exportButtons = document.querySelectorAll(".export-btn");
+        exportButtons.forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const type = btn.getAttribute("data-type");
+            exportSvgForType(type);
+          });
+        });
+
+        const typeToggles = document.querySelectorAll(".type-toggle");
+        typeToggles.forEach((cb) => {
+          cb.addEventListener("change", () => {
+            const type = parseInt(cb.getAttribute("data-type"), 10);
+            const checked = cb.checked;
+            state.enabledTypes[type] = checked;
+            markNeedsRender();
+          });
+        });
+      }
+
+      // ---------- Bootstrapping ----------
+
+      document.addEventListener("DOMContentLoaded", () => {
+        canvases[1] = document.getElementById("canvas1");
+        canvases[2] = document.getElementById("canvas2");
+        canvases[3] = document.getElementById("canvas3");
+        canvases[4] = document.getElementById("canvas4");
+
+        setupControls();
+        animationLoop(); // start continuous requestAnimationFrame loop
+      });
+    </script>
+  </body>
+</html>
