@@ -455,8 +455,16 @@
             <option value="gridJitter" selected>
               Grid + Jitter – offset within cell
             </option>
-            <option value="poissonDisc">
-              Poisson-disc – random with min distance
+            <option value="poissonDisc">Poisson-disc – random (legacy)</option>
+            <option value="poissonDiscEven">
+              Poisson-disc – even, no overlap
+            </option>
+            <option value="poissonDiscBridson">
+              Poisson-disc – blue noise (Bridson)
+            </option>
+            <option value="rotatedGrid">Rotated grid – lattice, thresholded</option>
+            <option value="rotatedGridToneSpacing">
+              Rotated grid – tone-based spacing
             </option>
             <option value="staggeredGrid">
               Staggered grid – brick/offset rows
@@ -468,6 +476,78 @@
           </select>
           <div class="hint">
             Only applies to Type 2 & 3 when brightness detection is unchecked.
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label class="control-label" for="rotatedGridAngle">
+            <span>Rotated grid angle</span>
+            <span class="value" id="rotatedGridAngleValue"></span>
+          </label>
+          <input
+            id="rotatedGridAngle"
+            type="range"
+            min="0"
+            max="90"
+            step="1"
+            value="45"
+          />
+          <div class="hint">
+            Angle for the rotated grid placement rule (degrees). 45° mimics
+            classic print screens.
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label class="control-label" for="rotatedGridThreshold">
+            <span>Rotated grid threshold</span>
+            <span class="value" id="rotatedGridThresholdValue"></span>
+          </label>
+          <input
+            id="rotatedGridThreshold"
+            type="range"
+            min="0"
+            max="0.3"
+            step="0.005"
+            value="0.05"
+          />
+          <div class="hint">
+            Brightness cutoff when using rotated grid placement. Higher =
+            fewer dots.
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label class="control-label" for="rotatedGridToneSpacing">
+            <span>Rotated grid tone spacing</span>
+            <span class="value" id="rotatedGridToneSpacingValue"></span>
+          </label>
+          <input
+            id="rotatedGridToneSpacing"
+            type="range"
+            min="0"
+            max="100"
+            step="0.5"
+            value="1"
+          />
+          <div class="hint">
+            Extra spacing in darker tones when using rotated grid – tone-based
+            spacing. 0 = uniform spacing, higher values (up to 100×) thin dots
+            more in dark areas.
+          </div>
+        </div>
+
+        <div class="control-group">
+          <div class="toggle-row">
+            <input id="type3KeepLatticeToggle" type="checkbox" />
+            <label for="type3KeepLatticeToggle">
+              Type 3: keep lattice (variable dot size only)
+            </label>
+          </div>
+          <div class="hint">
+            When enabled, Type 3 uses the full placement lattice (no dot
+            removal) and maps dot size directly from brightness instead of
+            turning dots on/off.
           </div>
         </div>
 
@@ -637,6 +717,10 @@
         brightnessDetectionEnabled: false,
         placementRule: "gridJitter",
         poissonMinDistanceScale: 1, // scale for min distance in Poisson-disc (0.3–2.5)
+        rotatedGridAngleDeg: 45, // 0–90, for rotated grid placement
+        rotatedGridThreshold: 0.05, // 0–0.3, brightness cutoff for rotated grid
+        type3KeepLattice: false, // Option C: keep lattice and vary radius instead of removing
+        rotatedGridToneSpacingStrength: 1, // strength for tone-based spacing (0–2)
         enabledTypes: {
           1: false,
           2: false,
@@ -1140,6 +1224,44 @@
         return out;
       }
 
+      // Rotated grid at a fixed angle (e.g. 45°) with brightness sampled at
+      // lattice points. Returns deterministic positions with associated
+      // brightness, so calling code can apply a simple threshold or size
+      // mapping without randomness.
+      function placementRotatedGrid(
+        width,
+        height,
+        cell,
+        getBrightness,
+        angleRad,
+      ) {
+        const out = [];
+        const cosA = Math.cos(angleRad);
+        const sinA = Math.sin(angleRad);
+        const margin = Math.max(width, height);
+
+        for (let x = -margin; x < width + margin; x += cell) {
+          for (let y = -margin; y < height + margin; y += cell) {
+            const rx = x * cosA - y * sinA;
+            const ry = x * sinA + y * cosA;
+            if (rx < 0 || rx >= width || ry < 0 || ry >= height) continue;
+            const b = getBrightness(rx, ry);
+            out.push({ x: rx, y: ry, b });
+          }
+        }
+        return out;
+      }
+
+      // Small deterministic pseudo-random based on integer coordinates, so
+      // thinning patterns are stable between renders but still "noisy".
+      function pseudoRandomFromCoords(x, y) {
+        let n =
+          (Math.floor(x) * 73856093) ^ (Math.floor(y) * 19349663) ^ 0x9e3779b9;
+        n = (n << 13) ^ n;
+        const nn = (n * (n * n * 15731 + 789221) + 1376312589) & 0x7fffffff;
+        return nn / 0x7fffffff;
+      }
+
       function placementPoissonDiscDots(
         width,
         height,
@@ -1212,6 +1334,231 @@
         return dots;
       }
 
+      // Variant Poisson-disc placement that enforces no visual overlap between dots
+      // and uses brightness-driven spacing for dense-but-even highlights and
+      // sparse-but-even shadows. This aims to approximate the very clean, even
+      // distribution seen in the reference image.
+      function placementPoissonDiscDotsEven(
+        width,
+        height,
+        getBrightness,
+        dotSizes,
+        isType3,
+        rngSeed,
+        dotCountFactor,
+      ) {
+        const rng = mulberry32(rngSeed);
+        const sizes = [dotSizes.small, dotSizes.medium, dotSizes.large];
+        const maxR = dotSizes.large;
+
+        // Internal scale for spacing. UI allows values <1, but we never allow
+        // effective spacing to go below the "no-overlap" limit.
+        const uiScale =
+          state.poissonMinDistanceScale != null
+            ? state.poissonMinDistanceScale
+            : 1;
+        const spacingScale = Math.max(1, uiScale);
+
+        // Estimate a safe upper bound on dot count so we keep performance reasonable.
+        const estimatedBase = (width * height) / 120;
+        const baseMax = Math.min(14000, Math.round(estimatedBase * 2.2));
+        const maxDots =
+          dotCountFactor != null && dotCountFactor > 1
+            ? Math.round(baseMax * dotCountFactor)
+            : baseMax;
+        const maxAttempts = Math.min(70000, maxDots * 10);
+
+        // Use the largest expected spacing as a uniform grid cell to look up neighbours.
+        // cellSize approximately equals the maximum expected min distance so neighbours
+        // that could violate spacing live within a small neighbourhood of cells.
+        const cellSize = Math.max(2, maxR * 2.2 * spacingScale);
+        const cols = Math.ceil(width / cellSize);
+        const rows = Math.ceil(height / cellSize);
+        const grid = new Array(cols * rows);
+        for (let i = 0; i < grid.length; i++) grid[i] = [];
+        const gridIndex = (ix, iy) => iy * cols + ix;
+
+        const dots = [];
+        let attempts = 0;
+
+        while (attempts < maxAttempts && dots.length < maxDots) {
+          attempts++;
+          const x = rng() * width;
+          const y = rng() * height;
+          const b = getBrightness(x, y);
+          // Skip very dark pixels entirely so shadows stay sparse.
+          if (b <= 0.015) continue;
+          // Additional probabilistic thinning by brightness so dark areas become
+          // sparser even when the geometric packing limit would allow more points.
+          const acceptProb = b * b; // strong emphasis on bright areas
+          if (rng() > acceptProb) continue;
+
+          const r = isType3
+            ? sizes[Math.min(2, Math.floor(b * 3))]
+            : dotSizes.medium;
+          if (r <= 0.12) continue;
+
+          const ix = Math.floor(x / cellSize);
+          const iy = Math.floor(y / cellSize);
+          let ok = true;
+          // Search neighbouring cells out to a small fixed radius; with our
+          // choice of cellSize this comfortably covers all neighbours that
+          // could violate spacing.
+          for (let gy = iy - 2; gy <= iy + 2 && ok; gy++) {
+            if (gy < 0 || gy >= rows) continue;
+            for (let gx = ix - 2; gx <= ix + 2 && ok; gx++) {
+              if (gx < 0 || gx >= cols) continue;
+              const cellList = grid[gridIndex(gx, gy)];
+              for (let i = 0; i < cellList.length; i++) {
+                const p = dots[cellList[i]];
+                const dx = p.x - x;
+                const dy = p.y - y;
+                // Pair-wise minimum distance uses the *sum* of radii so dots
+                // never overlap, then scaled by spacingScale so the slider
+                // pushes them further apart but never closer than tangent.
+                const baseNoOverlap = (r + p.r) * 1.05; // small safety margin
+                const minPair = baseNoOverlap * spacingScale;
+                if (dx * dx + dy * dy < minPair * minPair) {
+                  ok = false;
+                  break;
+                }
+              }
+            }
+          }
+          if (!ok) continue;
+
+          dots.push({ x, y, r });
+          grid[gridIndex(ix, iy)].push(dots.length - 1);
+        }
+
+        return dots;
+      }
+
+      // Bridson Poisson-disc (blue noise) sampler. Generates candidate points
+      // in an approximately uniform blue-noise pattern, then we gate by
+      // brightness and, for Type 3, map dot radius from brightness.
+      function placementPoissonDiscBridson(
+        width,
+        height,
+        getBrightness,
+        dotSizes,
+        isType3,
+        rngSeed,
+        dotCountFactor,
+      ) {
+        const rng = mulberry32(rngSeed);
+        const sizes = [dotSizes.small, dotSizes.medium, dotSizes.large];
+
+        // Base minimum distance derived from medium dot size and scaled by UI.
+        const uiScale =
+          state.poissonMinDistanceScale != null
+            ? state.poissonMinDistanceScale
+            : 1;
+        const baseR = dotSizes.medium || 1;
+        const minDist = Math.max(1, baseR * 2.2 * uiScale);
+        const k = 30; // attempts per active point
+
+        const cellSize = minDist / Math.SQRT2;
+        const cols = Math.ceil(width / cellSize);
+        const rows = Math.ceil(height / cellSize);
+        const grid = new Array(cols * rows).fill(null);
+        const gridIndex = (x, y) =>
+          Math.floor(y / cellSize) * cols + Math.floor(x / cellSize);
+
+        const samples = [];
+        const active = [];
+
+        function addSample(x, y) {
+          const s = { x, y };
+          samples.push(s);
+          active.push(s);
+          grid[gridIndex(x, y)] = s;
+        }
+
+        // Seed with a single point roughly centred for reproducibility.
+        addSample(width * 0.5, height * 0.5);
+
+        while (active.length) {
+          const idx = Math.floor(rng() * active.length);
+          const s = active[idx];
+          let found = false;
+
+          for (let i = 0; i < k; i++) {
+            const angle = rng() * Math.PI * 2;
+            const radius = minDist * (1 + rng());
+            const x = s.x + Math.cos(angle) * radius;
+            const y = s.y + Math.sin(angle) * radius;
+            if (x < 0 || x >= width || y < 0 || y >= height) continue;
+
+            let ok = true;
+            const gx = Math.floor(x / cellSize);
+            const gy = Math.floor(y / cellSize);
+            for (let yy = Math.max(gy - 2, 0); yy <= Math.min(gy + 2, rows - 1); yy++) {
+              for (
+                let xx = Math.max(gx - 2, 0);
+                xx <= Math.min(gx + 2, cols - 1);
+                xx++
+              ) {
+                const neighbour = grid[yy * cols + xx];
+                if (!neighbour) continue;
+                const dx = neighbour.x - x;
+                const dy = neighbour.y - y;
+                if (dx * dx + dy * dy < minDist * minDist) {
+                  ok = false;
+                  break;
+                }
+              }
+              if (!ok) break;
+            }
+
+            if (ok) {
+              addSample(x, y);
+              found = true;
+              break;
+            }
+          }
+
+          if (!found) {
+            active[idx] = active[active.length - 1];
+            active.pop();
+          }
+        }
+
+        if (!samples.length) return [];
+
+        const dots = [];
+        const brightnessCut = 0.02;
+        for (let i = 0; i < samples.length; i++) {
+          const { x, y } = samples[i];
+          const b = getBrightness(x, y);
+          if (b <= brightnessCut) continue;
+
+          if (isType3) {
+            const bucket = Math.min(2, Math.floor(b * 3));
+            const r = sizes[bucket];
+            if (r <= 0.01) continue;
+            dots.push({ x, y, r });
+          } else {
+            const r = dotSizes.medium;
+            if (r <= 0.01) continue;
+            dots.push({ x, y, r });
+          }
+        }
+
+        // Respect dotCountFactor by subsampling brightest positions if needed.
+        const maxDots =
+          dotCountFactor != null && dotCountFactor > 1
+            ? Math.round(dots.length * dotCountFactor)
+            : dots.length;
+        if (dots.length > maxDots) {
+          const getB = getBrightness;
+          const withB = dots.map((d) => ({ d, b: getB(d.x, d.y) }));
+          withB.sort((a, b) => b.b - a.b);
+          return withB.slice(0, maxDots).map((x) => x.d);
+        }
+        return dots;
+      }
+
       function placementRandomScatter(
         width,
         height,
@@ -1274,6 +1621,87 @@
               dotCountFactor,
             );
             return list;
+          }
+          if (rule === "poissonDiscBridson") {
+            return placementPoissonDiscBridson(
+              width,
+              height,
+              getBrightness,
+              dotSizes,
+              false,
+              7331,
+              dotCountFactor,
+            );
+          }
+          if (rule === "poissonDiscEven") {
+            const list = placementPoissonDiscDotsEven(
+              width,
+              height,
+              getBrightness,
+              dotSizes,
+              false,
+              1339,
+              dotCountFactor,
+            );
+            return list;
+          }
+          if (rule === "rotatedGrid") {
+            const angle =
+              ((state.rotatedGridAngleDeg != null
+                ? state.rotatedGridAngleDeg
+                : 45) *
+                Math.PI) /
+              180;
+            const candidates = placementRotatedGrid(
+              width,
+              height,
+              cell,
+              getBrightness,
+              angle,
+            );
+            const threshold =
+              state.rotatedGridThreshold != null
+                ? state.rotatedGridThreshold
+                : 0.05;
+            for (let i = 0; i < candidates.length; i++) {
+              const { x, y, b } = candidates[i];
+              if (b <= threshold) continue;
+              dots.push({ x, y, r });
+            }
+            return dots;
+          }
+          if (rule === "rotatedGridToneSpacing") {
+            const angle =
+              ((state.rotatedGridAngleDeg != null
+                ? state.rotatedGridAngleDeg
+                : 45) *
+                Math.PI) /
+              180;
+            const candidates = placementRotatedGrid(
+              width,
+              height,
+              cell,
+              getBrightness,
+              angle,
+            );
+            const strengthRaw =
+              state.rotatedGridToneSpacingStrength != null
+                ? state.rotatedGridToneSpacingStrength
+                : 1;
+            const s = Math.max(0, strengthRaw);
+            for (let i = 0; i < candidates.length; i++) {
+              const { x, y, b } = candidates[i];
+              const bb = clamp01(b);
+              if (bb <= 0.001) continue;
+              // Blue-ish tone spacing: keep probability falls off as brightness
+              // to a high power so dark tones thin out strongly when s is large.
+              const exponent = 1 + s; // s up to 100 → very strong falloff
+              const keepProb = Math.pow(bb, exponent);
+              const noise = pseudoRandomFromCoords(x, y);
+              if (noise > keepProb) continue;
+              dots.push({ x, y, r });
+            }
+            return dots;
           }
           if (rule === "randomScatter") {
             return placementRandomScatter(
@@ -1394,6 +1822,112 @@
                 : "Type 3: no dots (try lower threshold).";
             return list;
           }
+          if (rule === "poissonDiscBridson") {
+            const list = placementPoissonDiscBridson(
+              width,
+              height,
+              getBrightness,
+              dotSizes,
+              true,
+              7332,
+              dotCountFactor,
+            );
+            const perfHint = document.getElementById("perfHint");
+            if (perfHint) perfHint.textContent = "";
+            return list;
+          }
+          if (rule === "poissonDiscEven") {
+            const list = placementPoissonDiscDotsEven(
+              width,
+              height,
+              getBrightness,
+              dotSizes,
+              true,
+              4244,
+              dotCountFactor,
+            );
+            const perfHint = document.getElementById("perfHint");
+            if (perfHint) perfHint.textContent = "";
+            return list;
+          }
+          if (rule === "rotatedGrid") {
+            const angle =
+              ((state.rotatedGridAngleDeg != null
+                ? state.rotatedGridAngleDeg
+                : 45) *
+                Math.PI) /
+              180;
+            const candidates = placementRotatedGrid(
+              width,
+              height,
+              cell,
+              getBrightness,
+              angle,
+            );
+            const threshold =
+              state.rotatedGridThreshold != null
+                ? state.rotatedGridThreshold
+                : 0.05;
+            for (let i = 0; i < candidates.length; i++) {
+              const { x, y, b } = candidates[i];
+              if (b <= threshold) continue;
+              const bucket = Math.min(2, Math.floor(b * 3));
+              const r = sizes[bucket];
+              if (r <= 0.01) continue;
+              dots.push({ x, y, r });
+            }
+            const perfHint = document.getElementById("perfHint");
+            if (perfHint) perfHint.textContent = "";
+            return dots;
+          }
+          if (rule === "rotatedGridToneSpacing") {
+            const angle =
+              ((state.rotatedGridAngleDeg != null
+                ? state.rotatedGridAngleDeg
+                : 45) *
+                Math.PI) /
+              180;
+            const candidates = placementRotatedGrid(
+              width,
+              height,
+              cell,
+              getBrightness,
+              angle,
+            );
+            const strengthRaw =
+              state.rotatedGridToneSpacingStrength != null
+                ? state.rotatedGridToneSpacingStrength
+                : 1;
+            const s = Math.max(0, strengthRaw);
+            const keepLattice = !!state.type3KeepLattice;
+            for (let i = 0; i < candidates.length; i++) {
+              const { x, y, b } = candidates[i];
+              const bb = clamp01(b);
+              if (!keepLattice && bb <= 0.001) continue;
+              let keep = true;
+              if (!keepLattice) {
+                const exponent = 1 + s;
+                const keepProb = Math.pow(bb, exponent);
+                const noise = pseudoRandomFromCoords(x, y);
+                if (noise > keepProb) keep = false;
+              }
+              if (!keep) continue;
+              let r;
+              if (keepLattice) {
+                const minR = dotSizes.small * 0.4;
+                const maxR = dotSizes.large;
+                r = minR + bb * (maxR - minR);
+              } else {
+                const bucket = Math.min(2, Math.floor(bb * 3));
+                r = sizes[bucket];
+              }
+              if (r <= 0.01) continue;
+              dots.push({ x, y, r });
+            }
+            const perfHint = document.getElementById("perfHint");
+            if (perfHint) perfHint.textContent = "";
+            return dots;
+          }
           if (rule === "randomScatter") {
             return placementRandomScatter(
               width,
@@ -1440,11 +1974,23 @@
             );
           }
 
+          const keepLattice = !!state.type3KeepLattice;
           for (let i = 0; i < candidates.length; i++) {
             const { x, y, b } = candidates[i];
-            if (b <= 0.001) continue;
-            const bucket = Math.min(2, Math.floor(b * 3));
-            const r = sizes[bucket];
+            const bb = clamp01(b);
+            if (!keepLattice && bb <= 0.001) continue;
+
+            let r;
+            if (keepLattice) {
+              // Option C: map brightness continuously to radius, keeping
+              // every lattice point instead of probabilistically removing.
+              const minR = dotSizes.small * 0.4;
+              const maxR = dotSizes.large;
+              r = minR + bb * (maxR - minR);
+            } else {
+              const bucket = Math.min(2, Math.floor(bb * 3));
+              r = sizes[bucket];
+            }
             if (r <= 0.01) continue;
             dots.push({ x, y, r });
           }
@@ -1625,6 +2171,9 @@
         const brightnessMethodSelect =
           document.getElementById("brightnessMethod");
         const invertToggle = document.getElementById("invertToggle");
+        const type3KeepLatticeToggle = document.getElementById(
+          "type3KeepLatticeToggle",
+        );
 
         const gridSpacingValue = document.getElementById("gridSpacingValue");
         const dotSizeStepValue = document.getElementById("dotSizeStepValue");
@@ -1635,6 +2184,20 @@
           document.getElementById("poissonMinDistance");
         const poissonMinDistanceValue = document.getElementById(
           "poissonMinDistanceValue",
+        );
+        const rotatedGridAngle = document.getElementById("rotatedGridAngle");
+        const rotatedGridAngleValue = document.getElementById(
+          "rotatedGridAngleValue",
+        );
+        const rotatedGridThreshold =
+          document.getElementById("rotatedGridThreshold");
+        const rotatedGridThresholdValue = document.getElementById(
+          "rotatedGridThresholdValue",
+        );
+        const rotatedGridToneSpacing =
+          document.getElementById("rotatedGridToneSpacing");
+        const rotatedGridToneSpacingValue = document.getElementById(
+          "rotatedGridToneSpacingValue",
         );
         const shadowsLevel = document.getElementById("shadowsLevel");
         const midtonesLevel = document.getElementById("midtonesLevel");
@@ -1656,6 +2219,12 @@
           )}×`;
           if (poissonMinDistanceValue)
             poissonMinDistanceValue.textContent = `${(state.poissonMinDistanceScale != null ? state.poissonMinDistanceScale : 1).toFixed(1)}×`;
+          if (rotatedGridAngleValue)
+            rotatedGridAngleValue.textContent = `${(state.rotatedGridAngleDeg || 0).toFixed(0)}°`;
+          if (rotatedGridThresholdValue)
+            rotatedGridThresholdValue.textContent = `${(state.rotatedGridThreshold != null ? state.rotatedGridThreshold : 0.05).toFixed(3)}`;
+          if (rotatedGridToneSpacingValue)
+            rotatedGridToneSpacingValue.textContent = `${(state.rotatedGridToneSpacingStrength != null ? state.rotatedGridToneSpacingStrength : 1).toFixed(2)}×`;
           if (shadowsLevelValue)
             shadowsLevelValue.textContent = state.levelsShadows.toFixed(2);
           if (midtonesLevelValue)
@@ -1698,6 +2267,18 @@
           : "gridJitter";
         state.poissonMinDistanceScale = poissonMinDistance
           ? Number(poissonMinDistance.value) || 1
+          : 1;
+        state.rotatedGridAngleDeg = rotatedGridAngle
+          ? Number(rotatedGridAngle.value) || 45
+          : 45;
+        state.rotatedGridThreshold = rotatedGridThreshold
+          ? Number(rotatedGridThreshold.value) || 0.05
+          : 0.05;
+        state.type3KeepLattice = type3KeepLatticeToggle
+          ? type3KeepLatticeToggle.checked
+          : false;
+        state.rotatedGridToneSpacingStrength = rotatedGridToneSpacing
+          ? Number(rotatedGridToneSpacing.value) || 1
           : 1;
         state.enabledTypes = { 1: false, 2: false, 3: false, 4: false };
         syncLabels();
@@ -1787,6 +2368,35 @@
           poissonMinDistance.addEventListener("input", () => {
             state.poissonMinDistanceScale =
               Number(poissonMinDistance.value) || 1;
+            syncLabels();
+            markNeedsRender();
+          });
+        }
+        if (rotatedGridToneSpacing) {
+          rotatedGridToneSpacing.addEventListener("input", () => {
+            state.rotatedGridToneSpacingStrength =
+              Number(rotatedGridToneSpacing.value) || 0;
+            syncLabels();
+            markNeedsRender();
+          });
+        }
+        if (type3KeepLatticeToggle) {
+          type3KeepLatticeToggle.addEventListener("change", () => {
+            state.type3KeepLattice = type3KeepLatticeToggle.checked;
+            markNeedsRender();
+          });
+        }
+        if (rotatedGridAngle) {
+          rotatedGridAngle.addEventListener("input", () => {
+            state.rotatedGridAngleDeg = Number(rotatedGridAngle.value) || 0;
+            syncLabels();
+            markNeedsRender();
+          });
+        }
+        if (rotatedGridThreshold) {
+          rotatedGridThreshold.addEventListener("input", () => {
+            state.rotatedGridThreshold =
+              Number(rotatedGridThreshold.value) || 0;
             syncLabels();
             markNeedsRender();
           });
