@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PIXELS – Diamond Art</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        max-width: 900px;
+        margin: 1rem auto;
+        padding: 0 1rem;
+      }
+      h1 {
+        font-size: 1.25rem;
+        margin-bottom: 0.5rem;
+      }
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem;
+        align-items: flex-end;
+        margin-bottom: 1rem;
+      }
+      label {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+      }
+      input[type="number"] {
+        width: 5rem;
+      }
+      button {
+        padding: 0.4rem 0.8rem;
+        cursor: pointer;
+      }
+      #result {
+        margin-top: 1rem;
+      }
+      #result canvas {
+        display: block;
+        border: 1px solid #ccc;
+      }
+      .download-wrap {
+        margin-top: 0.5rem;
+      }
+      .download-wrap a {
+        font-size: 0.9rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>PIXELS – Diamond Art</h1>
+    <p>
+      Load an image — grid width and height are set automatically from the image
+      (capped at 800 to keep processing fast). Adjust scale and grid if needed,
+      then Process. Use a local server if the sample image does not load.
+    </p>
+
+    <div class="controls">
+      <label>
+        Image
+        <span>
+          <input type="file" id="file" accept="image/*" />
+          <button type="button" id="loadSample">
+            Load sample (image.webp)
+          </button>
+        </span>
+      </label>
+      <label
+        >Grid width
+        <input
+          type="number"
+          id="gridW"
+          value="240"
+          min="1"
+          max="800"
+          title="Higher = finer detail, more beads"
+      /></label>
+      <label
+        >Grid height
+        <input
+          type="number"
+          id="gridH"
+          value="320"
+          min="1"
+          max="800"
+          title="Higher = finer detail, more beads"
+      /></label>
+      <label
+        >Scale (px per bead)
+        <input
+          type="number"
+          id="scale"
+          value="4"
+          min="2"
+          max="16"
+          title="Output size of each bead in pixels"
+      /></label>
+      <label
+        title="Longest side of the grid. Image ratio is always preserved (no stretch)."
+      >
+        Grid size (max side)
+        <span style="display: flex; align-items: center; gap: 0.5rem">
+          <input
+            type="range"
+            id="gridSizeSlider"
+            min="50"
+            max="800"
+            step="10"
+            value="320"
+            style="width: 120px"
+          />
+          <span id="gridSizeValue">320</span>
+        </span>
+      </label>
+      <label title="Number of colors: 2 = black & white, 454 = all DMC colors">
+        Colors
+        <span style="display: flex; align-items: center; gap: 0.5rem">
+          <input
+            type="range"
+            id="colorCountSlider"
+            min="2"
+            max="454"
+            step="1"
+            value="454"
+            style="width: 220px"
+          />
+          <input
+            type="number"
+            id="colorCountInput"
+            min="2"
+            max="454"
+            value="454"
+            style="width: 4rem"
+            title="Type exact number"
+          />
+        </span>
+      </label>
+      <label title="Contrast and saturation applied before quantization (uncheck for raw image → palette)">
+        <input type="checkbox" id="preProcessCheck" checked />
+        Pre process
+      </label>
+      <label title="Black/white levels when Pre process is on (100 = no change, higher = more punch)">
+        Contrast (black/white)
+        <span style="display: flex; align-items: center; gap: 0.5rem">
+          <input
+            type="range"
+            id="contrastSlider"
+            min="50"
+            max="200"
+            step="5"
+            value="100"
+            style="width: 100px"
+          />
+          <span id="contrastValue">1.00</span>
+        </span>
+      </label>
+      <label title="Color intensity when Pre process is on (100 = no change, 0 = grayscale, higher = more vivid)">
+        Saturation (color intensity)
+        <span style="display: flex; align-items: center; gap: 0.5rem">
+          <input
+            type="range"
+            id="saturationSlider"
+            min="0"
+            max="200"
+            step="5"
+            value="100"
+            style="width: 100px"
+          />
+          <span id="saturationValue">1.00</span>
+        </span>
+      </label>
+      <label title="Remove isolated pixels after quantization (reduces single-pixel noise)">
+        <input type="checkbox" id="noiseCleanupCheck" />
+        Noise cleanup
+      </label>
+      <label title="Draw diamond/bead highlights; uncheck for flat color blocks only">
+        <input type="checkbox" id="renderGridCheck" checked />
+        Render grid
+      </label>
+      <label title="Grid look when Render grid is on: bead highlights or pyramid diamond">
+        Grid style
+        <select id="gridStyleSelect">
+          <option value="diamond">Diamond (bead)</option>
+          <option value="flatDiamond">Pyramid Diamond</option>
+        </select>
+      </label>
+      <label title="Override palette: Grayscale (5 grays), Vintage (sepia/cream), Pop-art (bold primaries)">
+        Style
+        <select id="styleSelect">
+          <option value="default">Default (DMC)</option>
+          <option value="grayscale">Grayscale</option>
+          <option value="vintage">Vintage</option>
+          <option value="pop-art">Pop-art</option>
+        </select>
+      </label>
+      <button type="button" id="process">Process</button>
+    </div>
+
+    <div id="result"></div>
+    <div class="download-wrap" id="downloadWrap" style="display: none">
+      <a id="downloadLink" href="#" download="diamond-art.png">Download PNG</a>
+    </div>
+
+    <script src="diamond-art.js"></script>
+    <script>
+      (function () {
+        const fileInput = document.getElementById("file");
+        const loadSampleBtn = document.getElementById("loadSample");
+        const gridWInput = document.getElementById("gridW");
+        const gridHInput = document.getElementById("gridH");
+        const scaleInput = document.getElementById("scale");
+        const gridSizeSlider = document.getElementById("gridSizeSlider");
+        const gridSizeValue = document.getElementById("gridSizeValue");
+        const colorCountSlider = document.getElementById("colorCountSlider");
+        const colorCountInput = document.getElementById("colorCountInput");
+        const preProcessCheck = document.getElementById("preProcessCheck");
+        const contrastSlider = document.getElementById("contrastSlider");
+        const contrastValue = document.getElementById("contrastValue");
+        const saturationSlider = document.getElementById("saturationSlider");
+        const saturationValue = document.getElementById("saturationValue");
+        const noiseCleanupCheck = document.getElementById("noiseCleanupCheck");
+        const renderGridCheck = document.getElementById("renderGridCheck");
+        const gridStyleSelect = document.getElementById("gridStyleSelect");
+        const styleSelect = document.getElementById("styleSelect");
+        const processBtn = document.getElementById("process");
+
+        contrastSlider.addEventListener("input", function () {
+          const v = parseInt(contrastSlider.value, 10) / 100;
+          contrastValue.textContent = v.toFixed(2);
+        });
+        saturationSlider.addEventListener("input", function () {
+          const v = parseInt(saturationSlider.value, 10) / 100;
+          saturationValue.textContent = v.toFixed(2);
+        });
+
+        function syncColorCount(fromSlider) {
+          const v = Math.max(2, Math.min(454, parseInt(fromSlider ? colorCountSlider.value : colorCountInput.value, 10) || 2));
+          colorCountSlider.value = v;
+          colorCountInput.value = v;
+        }
+        colorCountSlider.addEventListener("input", () => syncColorCount(true));
+        colorCountInput.addEventListener("change", () => syncColorCount(false));
+        const resultDiv = document.getElementById("result");
+        const downloadWrap = document.getElementById("downloadWrap");
+        const downloadLink = document.getElementById("downloadLink");
+
+        let currentImage = null;
+        const maxGridDim = 800;
+
+        function setGridFromImage(img) {
+          let w = img.naturalWidth;
+          let h = img.naturalHeight;
+          if (w <= maxGridDim && h <= maxGridDim) {
+            gridWInput.value = w;
+            gridHInput.value = h;
+          } else if (w >= h) {
+            gridWInput.value = maxGridDim;
+            gridHInput.value = Math.round((maxGridDim * h) / w);
+          } else {
+            gridHInput.value = maxGridDim;
+            gridWInput.value = Math.round((maxGridDim * w) / h);
+          }
+          syncGridSizeSlider();
+        }
+
+        function getImageRatio() {
+          if (
+            currentImage &&
+            currentImage.naturalWidth &&
+            currentImage.naturalHeight
+          ) {
+            return currentImage.naturalWidth / currentImage.naturalHeight;
+          }
+          const w = parseInt(gridWInput.value, 10) || 240;
+          const h = Math.max(1, parseInt(gridHInput.value, 10) || 320);
+          return w / h;
+        }
+
+        function syncGridSizeSlider() {
+          const w = parseInt(gridWInput.value, 10) || 1;
+          const h = Math.max(1, parseInt(gridHInput.value, 10) || 1);
+          const maxSide = Math.max(w, h);
+          const clamped = Math.max(50, Math.min(800, maxSide));
+          gridSizeSlider.value = clamped;
+          gridSizeValue.textContent = clamped;
+        }
+
+        function applyGridSizeFromSlider() {
+          const maxSide = Math.max(
+            50,
+            Math.min(800, parseInt(gridSizeSlider.value, 10) || 320)
+          );
+          const ratio = getImageRatio();
+          let w, h;
+          if (ratio >= 1) {
+            w = maxSide;
+            h = Math.max(1, Math.min(800, Math.round(maxSide / ratio)));
+          } else {
+            h = maxSide;
+            w = Math.max(1, Math.min(800, Math.round(maxSide * ratio)));
+          }
+          gridWInput.value = w;
+          gridHInput.value = h;
+        }
+
+        gridSizeSlider.addEventListener("input", function () {
+          gridSizeValue.textContent = gridSizeSlider.value;
+          applyGridSizeFromSlider();
+        });
+
+        gridWInput.addEventListener("change", function () {
+          if (
+            currentImage &&
+            currentImage.naturalWidth &&
+            currentImage.naturalHeight
+          ) {
+            const w = Math.max(1, parseInt(gridWInput.value, 10) || 240);
+            const ratio =
+              currentImage.naturalWidth / currentImage.naturalHeight;
+            gridHInput.value = Math.max(
+              1,
+              Math.min(800, Math.round(w / ratio))
+            );
+          }
+          syncGridSizeSlider();
+        });
+        gridHInput.addEventListener("change", function () {
+          if (
+            currentImage &&
+            currentImage.naturalWidth &&
+            currentImage.naturalHeight
+          ) {
+            const h = Math.max(1, parseInt(gridHInput.value, 10) || 320);
+            const ratio =
+              currentImage.naturalWidth / currentImage.naturalHeight;
+            gridWInput.value = Math.max(
+              1,
+              Math.min(800, Math.round(h * ratio))
+            );
+          }
+          syncGridSizeSlider();
+        });
+
+        function getImage(cb) {
+          if (
+            currentImage &&
+            currentImage.complete &&
+            currentImage.naturalWidth
+          ) {
+            cb(currentImage);
+            return;
+          }
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.onload = function () {
+            currentImage = img;
+            setGridFromImage(img);
+            cb(img);
+          };
+          img.onerror = function () {
+            alert("Failed to load image.");
+          };
+          img.src = "03358e48-bb84-4fd0-b8d5-76fd024a989e.png";
+        }
+
+        loadSampleBtn.addEventListener("click", function () {
+          getImage(function () {
+            resultDiv.innerHTML =
+              "Sample loaded. Grid set from image. Click Process.";
+            downloadWrap.style.display = "none";
+          });
+        });
+
+        fileInput.addEventListener("change", function () {
+          const f = fileInput.files && fileInput.files[0];
+          if (!f) return;
+          const img = new Image();
+          img.onload = function () {
+            currentImage = img;
+            setGridFromImage(img);
+            resultDiv.innerHTML =
+              "Image selected. Grid set from image. Click Process.";
+            downloadWrap.style.display = "none";
+          };
+          img.onerror = function () {
+            alert("Failed to load file.");
+          };
+          img.src = URL.createObjectURL(f);
+        });
+
+        function run(img, opts) {
+          const gridW = Math.max(
+            1,
+            Math.min(800, parseInt(gridWInput.value, 10) || 240)
+          );
+          const gridH = Math.max(
+            1,
+            Math.min(800, parseInt(gridHInput.value, 10) || 320)
+          );
+          const scale = Math.max(
+            2,
+            Math.min(16, parseInt(scaleInput.value, 10) || 4)
+          );
+          const maxColors = Math.max(
+            2,
+            Math.min(454, parseInt(colorCountInput.value, 10) || 454)
+          );
+          resultDiv.innerHTML = "";
+          const contrastIntensity = parseInt(contrastSlider.value, 10) / 100;
+          const saturation = parseInt(saturationSlider.value, 10) / 100;
+          const optsWithStyle = {
+            ...opts,
+            style: styleSelect.value,
+            preProcess: preProcessCheck.checked,
+            runCleanup: noiseCleanupCheck.checked,
+            renderGrid: renderGridCheck.checked,
+            gridStyle: gridStyleSelect.value,
+            contrastIntensity,
+            saturation,
+          };
+          if (optsWithStyle.style === "default") delete optsWithStyle.style;
+          try {
+            const canvas = window.createDiamondArt(img, gridW, gridH, scale, maxColors, optsWithStyle);
+            resultDiv.appendChild(canvas);
+            downloadLink.href = canvas.toDataURL("image/png");
+            downloadLink.download = "diamond-art.png";
+            downloadWrap.style.display = "block";
+          } catch (e) {
+            resultDiv.textContent =
+              "Error: " + (e && e.message ? e.message : String(e));
+            downloadWrap.style.display = "none";
+          }
+        }
+
+        processBtn.addEventListener("click", function () {
+          var img = currentImage;
+          if (!img || !img.complete || !img.naturalWidth) {
+            getImage(function (im) {
+              run(im);
+            });
+          } else {
+            run(img);
+          }
+        });
+
+      })();
+    </script>
+  </body>
+</html>
