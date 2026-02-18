@@ -539,6 +539,19 @@
 
         <div class="control-group">
           <div class="toggle-row">
+            <input id="type1KeepLatticeToggle" type="checkbox" />
+            <label for="type1KeepLatticeToggle">
+              Type 1: keep lattice (variable dot size only)
+            </label>
+          </div>
+          <div class="hint">
+            When enabled, Type 1 keeps every grid cell (no dot removal) and
+            maps dot size from brightness instead of turning dots on/off.
+          </div>
+        </div>
+
+        <div class="control-group">
+          <div class="toggle-row">
             <input id="type3KeepLatticeToggle" type="checkbox" />
             <label for="type3KeepLatticeToggle">
               Type 3: keep lattice (variable dot size only)
@@ -719,6 +732,7 @@
         poissonMinDistanceScale: 1, // scale for min distance in Poisson-disc (0.3–2.5)
         rotatedGridAngleDeg: 45, // 0–90, for rotated grid placement
         rotatedGridThreshold: 0.05, // 0–0.3, brightness cutoff for rotated grid
+        type1KeepLattice: false, // Type 1: keep every grid cell, vary radius from brightness
         type3KeepLattice: false, // Option C: keep lattice and vary radius instead of removing
         rotatedGridToneSpacingStrength: 1, // strength for tone-based spacing (0–2)
         enabledTypes: {
@@ -1129,15 +1143,24 @@
         const eff = dotCountFactor > 1 ? Math.sqrt(dotCountFactor) : 1;
         const cell = Math.max(2, gridSpacing / eff);
         const sizes = [dotSizes.small, dotSizes.medium, dotSizes.large];
+        const keepLattice = !!state.type1KeepLattice;
 
         for (let y = 0; y < height; y += cell) {
           const cy = y + cell / 2;
           for (let x = 0; x < width; x += cell) {
             const cx = x + cell / 2;
             const b = getCellBrightness(cx, cy, cell);
-            if (b <= 0.001) continue;
-            const bucket = Math.min(2, Math.floor(b * 3)); // 0, 1, or 2
-            const r = sizes[bucket];
+            const bb = clamp01(b);
+            if (!keepLattice && bb <= 0.001) continue;
+            let r;
+            if (keepLattice) {
+              const minR = dotSizes.small * 0.4;
+              const maxR = dotSizes.large;
+              r = minR + bb * (maxR - minR);
+            } else {
+              const bucket = Math.min(2, Math.floor(bb * 3)); // 0, 1, or 2
+              r = sizes[bucket];
+            }
             if (r <= 0.01) continue;
             dots.push({ x: cx, y: cy, r });
           }
@@ -2171,6 +2194,9 @@
         const brightnessMethodSelect =
           document.getElementById("brightnessMethod");
         const invertToggle = document.getElementById("invertToggle");
+        const type1KeepLatticeToggle = document.getElementById(
+          "type1KeepLatticeToggle",
+        );
         const type3KeepLatticeToggle = document.getElementById(
           "type3KeepLatticeToggle",
         );
@@ -2274,6 +2300,9 @@
         state.rotatedGridThreshold = rotatedGridThreshold
           ? Number(rotatedGridThreshold.value) || 0.05
           : 0.05;
+        state.type1KeepLattice = type1KeepLatticeToggle
+          ? type1KeepLatticeToggle.checked
+          : false;
         state.type3KeepLattice = type3KeepLatticeToggle
           ? type3KeepLatticeToggle.checked
           : false;
@@ -2377,6 +2406,12 @@
             state.rotatedGridToneSpacingStrength =
               Number(rotatedGridToneSpacing.value) || 0;
             syncLabels();
+            markNeedsRender();
+          });
+        }
+        if (type1KeepLatticeToggle) {
+          type1KeepLatticeToggle.addEventListener("change", () => {
+            state.type1KeepLattice = type1KeepLatticeToggle.checked;
             markNeedsRender();
           });
         }
