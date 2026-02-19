@@ -284,6 +284,7 @@
     </style>
   </head>
   <body>
+    <script src="../palette-dmc.js"></script>
     <div class="app-shell">
       <header>
         <div class="title-block">
@@ -443,6 +444,36 @@
           <div class="hint">
             When enabled, summarizes “white” per cell (Type 1 & 4). Uncheck to
             use center pixel only.
+          </div>
+        </div>
+
+        <div class="control-group">
+          <div class="toggle-row">
+            <input id="coloredPaletteToggle" type="checkbox" />
+            <label for="coloredPaletteToggle">Colored (DMC palette)</label>
+          </div>
+          <div class="hint">
+            Use DMC floss colors instead of black/white grayscale. Requires
+            palette-dmc.js loaded.
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label class="control-label" for="maxColors">
+            <span>Colors needed</span>
+            <span class="value" id="maxColorsValue"></span>
+          </label>
+          <input
+            id="maxColors"
+            type="range"
+            min="5"
+            max="454"
+            step="1"
+            value="454"
+          />
+          <div class="hint">
+            Max colors to keep; least-used colors are removed first. Only when
+            Colored (DMC) is on.
           </div>
         </div>
 
@@ -627,8 +658,7 @@
                 Type 2 – Fixed Size + Variable Density
               </div>
               <div class="panel-subtitle">
-                Dots at brightness peaks (local maxima); fixed size, no grid, no
-                random.
+                Dots at brightness peaks; fixed size. 5 grayscale colors (black → white).
               </div>
             </div>
             <div class="canvas-wrap">
@@ -681,7 +711,7 @@
             <div class="panel-header">
               <div class="panel-title">Type 4 – Fixed Grid + Fixed Size</div>
               <div class="panel-subtitle">
-                Uniform grid with constant dot size, gated by brightness.
+                Uniform grid, constant dot size, 5 grayscale colors (black → white) like diamond painting.
               </div>
             </div>
             <div class="canvas-wrap">
@@ -728,6 +758,8 @@
         dotShape: "circle",
         brightnessMethod: "mean",
         brightnessDetectionEnabled: false,
+        useColoredPalette: false,
+        maxColors: 454,
         placementRule: "gridJitter",
         poissonMinDistanceScale: 1, // scale for min distance in Poisson-disc (0.3–2.5)
         rotatedGridAngleDeg: 45, // 0–90, for rotated grid placement
@@ -1057,7 +1089,93 @@
         }
       }
 
-      function drawDotsToCanvas(ctx, dots) {
+      // 5 grayscale colors for Type 4 (diamond-painting style): black → white
+      const GRAYSCALE_5 = ["#000000", "#404040", "#808080", "#c0c0c0", "#ffffff"];
+
+      function brightnessToGrayscale5(b) {
+        const bb = clamp01(b);
+        const bucket = Math.min(4, Math.floor(bb * 5));
+        return GRAYSCALE_5[bucket];
+      }
+
+      // DMC palette sorted by luminance (dark → light) for brightness mapping
+      let DMC_PALETTE_BY_LUMINANCE = null;
+      function getDmcPaletteByLuminance() {
+        if (typeof PALETTE === "undefined" || !PALETTE.length) return null;
+        if (DMC_PALETTE_BY_LUMINANCE) return DMC_PALETTE_BY_LUMINANCE;
+        const lum = (r, g, b) => 0.299 * r + 0.587 * g + 0.114 * b;
+        DMC_PALETTE_BY_LUMINANCE = [...PALETTE]
+          .map((c) => ({ ...c, lum: lum(c.rgb[0], c.rgb[1], c.rgb[2]) }))
+          .sort((a, b) => a.lum - b.lum);
+        return DMC_PALETTE_BY_LUMINANCE;
+      }
+      function brightnessToDmcColor(b) {
+        const pal = getDmcPaletteByLuminance();
+        if (!pal || !pal.length) return brightnessToGrayscale5(b);
+        const bb = clamp01(b);
+        const idx = Math.min(pal.length - 1, Math.floor(bb * pal.length));
+        const [r, g, bVal] = pal[idx].rgb;
+        return `#${[r, g, bVal].map((x) => x.toString(16).padStart(2, "0")).join("")}`;
+      }
+      function brightnessToColor(b) {
+        return state.useColoredPalette
+          ? brightnessToDmcColor(b)
+          : brightnessToGrayscale5(b);
+      }
+
+      function getDmcPaletteLength() {
+        return typeof PALETTE !== "undefined" && PALETTE.length
+          ? PALETTE.length
+          : 454;
+      }
+
+      function hexToRgb(hex) {
+        const n = parseInt(hex.slice(1), 16);
+        return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+      }
+      function colorDistanceSq(hex1, hex2) {
+        const [r1, g1, b1] = hexToRgb(hex1);
+        const [r2, g2, b2] = hexToRgb(hex2);
+        return (r1 - r2) ** 2 + (g1 - g2) ** 2 + (b1 - b2) ** 2;
+      }
+      function nearestColorInList(hex, list) {
+        if (!list.length) return hex;
+        let best = list[0];
+        let bestD = colorDistanceSq(hex, best);
+        for (let i = 1; i < list.length; i++) {
+          const d = colorDistanceSq(hex, list[i]);
+          if (d < bestD) {
+            bestD = d;
+            best = list[i];
+          }
+        }
+        return best;
+      }
+      /** Keep only the top maxColors most-used colors; remap others to nearest. Returns new array. */
+      function limitDotColors(dots, maxColors) {
+        if (!dots || dots.length === 0) return dots;
+        const paletteLen = getDmcPaletteLength();
+        if (maxColors >= paletteLen) return dots;
+
+        const count = {};
+        for (let i = 0; i < dots.length; i++) {
+          const c = dots[i].color;
+          if (c) count[c] = (count[c] || 0) + 1;
+        }
+        const sorted = Object.entries(count).sort((a, b) => b[1] - a[1]);
+        const keptList = sorted.slice(0, maxColors).map(([c]) => c);
+        const keptSet = new Set(keptList);
+        if (keptList.length === 0) return dots;
+
+        return dots.map((d) => {
+          const c = d.color;
+          const finalColor =
+            c && keptSet.has(c) ? c : nearestColorInList(c || "#ffffff", keptList);
+          return { ...d, color: finalColor };
+        });
+      }
+
+      function drawDotsToCanvas(ctx, dots, useColoredDots) {
         const { width, height, dotShape } = state;
         // Dark background with white dots: this reads correctly as “light = ink”
         // when viewed on screen or exported as SVG.
@@ -1069,9 +1187,26 @@
 
         if (!dots || dots.length === 0) return;
 
-        ctx.fillStyle = "#ffffff";
-        ctx.beginPath();
-        if (dotShape === "square") {
+        const hasColors = useColoredDots && dots.length > 0 && dots[0].color != null;
+
+        if (hasColors) {
+          for (let i = 0; i < dots.length; i++) {
+            const d = dots[i];
+            if (d.r <= 0) continue;
+            ctx.fillStyle = d.color || "#ffffff";
+            if (dotShape === "square") {
+              const size = d.r * 2;
+              ctx.fillRect(d.x - d.r, d.y - d.r, size, size);
+            } else {
+              ctx.beginPath();
+              ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        } else {
+          ctx.fillStyle = "#ffffff";
+          ctx.beginPath();
+          if (dotShape === "square") {
           // Draw axis-aligned squares centred on (x, y)
           for (let i = 0; i < dots.length; i++) {
             const d = dots[i];
@@ -1089,6 +1224,7 @@
           }
         }
         ctx.fill();
+        }
       }
 
       // Three discrete dot sizes: small, medium, large. Step 0 = 0.3, 0.6, 0.9 px; step 1 = 0.6, 0.9, 1.2 px; etc. (0.3 increment).
@@ -1643,10 +1779,12 @@
               1337,
               dotCountFactor,
             );
+            for (let i = 0; i < list.length; i++)
+              list[i].color = brightnessToColor(getBrightness(list[i].x, list[i].y));
             return list;
           }
           if (rule === "poissonDiscBridson") {
-            return placementPoissonDiscBridson(
+            const list = placementPoissonDiscBridson(
               width,
               height,
               getBrightness,
@@ -1655,6 +1793,9 @@
               7331,
               dotCountFactor,
             );
+            for (let i = 0; i < list.length; i++)
+              list[i].color = brightnessToColor(getBrightness(list[i].x, list[i].y));
+            return list;
           }
           if (rule === "poissonDiscEven") {
             const list = placementPoissonDiscDotsEven(
@@ -1666,6 +1807,8 @@
               1339,
               dotCountFactor,
             );
+            for (let i = 0; i < list.length; i++)
+              list[i].color = brightnessToColor(getBrightness(list[i].x, list[i].y));
             return list;
           }
           if (rule === "rotatedGrid") {
@@ -1689,7 +1832,7 @@
             for (let i = 0; i < candidates.length; i++) {
               const { x, y, b } = candidates[i];
               if (b <= threshold) continue;
-              dots.push({ x, y, r });
+              dots.push({ x, y, r, color: brightnessToColor(b) });
             }
             return dots;
           }
@@ -1722,12 +1865,12 @@
               const keepProb = Math.pow(bb, exponent);
               const noise = pseudoRandomFromCoords(x, y);
               if (noise > keepProb) continue;
-              dots.push({ x, y, r });
+              dots.push({ x, y, r, color: brightnessToColor(bb) });
             }
             return dots;
           }
           if (rule === "randomScatter") {
-            return placementRandomScatter(
+            const list = placementRandomScatter(
               width,
               height,
               getBrightness,
@@ -1736,6 +1879,9 @@
               1338,
               Math.round(12000 * dotCountFactor),
             );
+            for (let i = 0; i < list.length; i++)
+              list[i].color = brightnessToColor(getBrightness(list[i].x, list[i].y));
+            return list;
           }
 
           let candidates;
@@ -1773,7 +1919,7 @@
             const { x, y, b } = candidates[i];
             const p = Math.pow(clamp01(b), contrast);
             if (p <= 0) continue;
-            if (rng() < p) dots.push({ x, y, r });
+            if (rng() < p) dots.push({ x, y, r, color: brightnessToColor(b) });
           }
           return dots;
         }
@@ -1791,7 +1937,7 @@
           step: 1,
         });
         for (let i = 0; i < peaks.length; i++)
-          dots.push({ x: peaks[i].x, y: peaks[i].y, r });
+          dots.push({ x: peaks[i].x, y: peaks[i].y, r, color: brightnessToColor(peaks[i].b) });
         return dots;
       }
 
@@ -1803,8 +1949,17 @@
           state.dotCountFactor,
           params.getBrightness,
         );
+        if (
+          state.useColoredPalette &&
+          dots.length > 0 &&
+          dots[0].color != null
+        ) {
+          const palLen = getDmcPaletteLength();
+          const maxC = Math.max(5, Math.min(palLen, state.maxColors ?? palLen));
+          if (maxC < palLen) dots = limitDotColors(dots, maxC);
+        }
         const ctx = canvases[2].getContext("2d");
-        drawDotsToCanvas(ctx, dots);
+        drawDotsToCanvas(ctx, dots, true);
       }
 
       // ---------- Algorithm: Type 3 – Variable Size + Position ----------
@@ -2059,7 +2214,9 @@
 
       // ---------- Algorithm: Type 4 – Fixed Grid + Fixed Size ----------
       // Fixed grid, fixed dot size. Dots at cell centers where cell is bright.
-      // Brightness from selected detection method.
+      // Brightness from selected detection method. Each dot gets one of 5
+      // grayscale colors (black, dark gray, gray, light gray, white) like
+      // diamond painting – color encodes brightness, contrary to dot presence.
 
       function computeDotsType4(params) {
         const { width, height, gridSpacing, dotSizes, dotCountFactor = 1 } =
@@ -2076,7 +2233,8 @@
             const cx = x + cell / 2;
             const b = getCellBrightness(cx, cy, cell);
             if (b <= 0.001) continue;
-            dots.push({ x: cx, y: cy, r });
+            const color = brightnessToColor(b);
+            dots.push({ x: cx, y: cy, r, color });
           }
         }
 
@@ -2091,8 +2249,17 @@
           state.dotCountFactor,
           params.getBrightness,
         );
+        if (
+          state.useColoredPalette &&
+          dots.length > 0 &&
+          dots[0].color != null
+        ) {
+          const palLen = getDmcPaletteLength();
+          const maxC = Math.max(5, Math.min(palLen, state.maxColors ?? palLen));
+          if (maxC < palLen) dots = limitDotColors(dots, maxC);
+        }
         const ctx = canvases[4].getContext("2d");
-        drawDotsToCanvas(ctx, dots);
+        drawDotsToCanvas(ctx, dots, true);
       }
 
       // ---------- Master render loop using requestAnimationFrame ----------
@@ -2148,6 +2315,16 @@
           params.getBrightness,
         );
         if (!dots || dots.length === 0) return;
+        if (
+          (t === 2 || t === 4) &&
+          state.useColoredPalette &&
+          dots.length > 0 &&
+          dots[0].color != null
+        ) {
+          const palLen = getDmcPaletteLength();
+          const maxC = Math.max(5, Math.min(palLen, state.maxColors ?? palLen));
+          if (maxC < palLen) dots = limitDotColors(dots, maxC);
+        }
 
         const W = state.width;
         const H = state.height;
@@ -2155,19 +2332,21 @@
         svg += `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`;
         svg += `<rect width="100%" height="100%" fill="#05060a"/>`;
         const shape = state.dotShape || "circle";
+        const useColoredDots = (t === 2 || t === 4) && dots.length > 0 && dots[0].color != null;
         for (let i = 0; i < dots.length; i++) {
           const d = dots[i];
           const r = d.r;
           if (r <= 0) continue;
+          const fill = useColoredDots && d.color ? d.color : "white";
           if (shape === "square") {
             const size = (r * 2).toFixed(3);
             const x = (d.x - r).toFixed(3);
             const y = (d.y - r).toFixed(3);
-            svg += `<rect x="${x}" y="${y}" width="${size}" height="${size}" fill="white" />`;
+            svg += `<rect x="${x}" y="${y}" width="${size}" height="${size}" fill="${fill}" />`;
           } else {
             svg += `<circle cx="${d.x.toFixed(3)}" cy="${d.y.toFixed(3)}" r="${r.toFixed(
               3,
-            )}" fill="white" />`;
+            )}" fill="${fill}" />`;
           }
         }
         svg += `</svg>`;
@@ -2262,6 +2441,10 @@
             dotCountFactorValue.textContent = `${Math.round(
               (state.dotCountFactor || 1) * 100,
             )}%`;
+          if (maxColorsValueEl)
+            maxColorsValueEl.textContent = String(
+              state.maxColors ?? getDmcPaletteLength(),
+            );
         }
 
         // Initialize from default state
@@ -2280,9 +2463,25 @@
         const brightnessDetectionToggle = document.getElementById(
           "brightnessDetectionToggle",
         );
+        const coloredPaletteToggle =
+          document.getElementById("coloredPaletteToggle");
+        const maxColorsEl = document.getElementById("maxColors");
+        const maxColorsValueEl = document.getElementById("maxColorsValue");
         state.brightnessDetectionEnabled = brightnessDetectionToggle
           ? brightnessDetectionToggle.checked
           : true;
+        state.useColoredPalette = coloredPaletteToggle
+          ? coloredPaletteToggle.checked
+          : false;
+        if (maxColorsEl) {
+          const palLen = getDmcPaletteLength();
+          maxColorsEl.max = String(palLen);
+          state.maxColors = Math.max(
+            5,
+            Math.min(palLen, Number(maxColorsEl.value) || palLen),
+          );
+          maxColorsEl.disabled = !state.useColoredPalette;
+        }
         state.brightnessMethod = brightnessMethodSelect
           ? brightnessMethodSelect.value || "mean"
           : "mean";
@@ -2386,6 +2585,28 @@
           });
           if (brightnessMethodSelect)
             brightnessMethodSelect.disabled = !state.brightnessDetectionEnabled;
+        }
+        if (coloredPaletteToggle) {
+          coloredPaletteToggle.addEventListener("change", () => {
+            state.useColoredPalette = coloredPaletteToggle.checked;
+            if (maxColorsEl) maxColorsEl.disabled = !state.useColoredPalette;
+            markNeedsRender();
+          });
+        }
+        if (maxColorsEl) {
+          maxColorsEl.addEventListener("input", () => {
+            state.maxColors = Math.max(
+              5,
+              Math.min(
+                getDmcPaletteLength(),
+                Number(maxColorsEl.value) || getDmcPaletteLength(),
+              ),
+            );
+            syncLabels();
+            markNeedsRender();
+          });
+          if (maxColorsValueEl)
+            maxColorsValueEl.textContent = String(state.maxColors);
         }
         if (placementRuleSelect) {
           placementRuleSelect.addEventListener("change", () => {
